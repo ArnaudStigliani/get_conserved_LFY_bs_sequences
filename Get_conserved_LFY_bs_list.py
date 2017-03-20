@@ -4,25 +4,30 @@
 ### ----------------------------
 
 '''
-This program allows to identify LFY binding sites (BS).
-You need a matrix with frequency values and fasta sequences (bound sequences (i.e. peaks)).
+This program allows to identify LFY binding sites (BS) that are conserved among the 1001 A. thaliana genomes 
+(http://1001genomes.org/data/GMI-MPI/releases/v3.1/intersection_snp_short_indel_vcf/).
+You need a matrix with frequency values and fasta sequences (bound sequences (i.e. peaks)). Here we use ChIP-Seq sequences for LFY.
 This program was written by Adrien Bessy, Arnaud Stigliani and Francois Parcy, and was inspired by Morpheus program written by Eugenio Gomez Minguet
 and (4-scores.py and CalculateScoreAboveTh_and_Interdistances.py) programs written by Laura Gregoire.
 '''
 
 import vcf
+import pysam
 import numpy as np
 from Bio import SeqIO
 import argparse
 import os
+import glob
+from tqdm import tqdm
+import operator
 
 parser = argparse.ArgumentParser()                                               
 
 parser.add_argument("--factor", "-fac", type=str, default= "LFY_scores_matrix_19nucl")
-parser.add_argument("--threshold", "-th",nargs='+',type=int,default= -23)
+parser.add_argument("--threshold", "-th",type=int,default= -23)
 args = parser.parse_args()
 
-#python get_interdistancesV2.py -fac "LFY_scores_matrix_19nucl" -th -23 
+#python Get_conserved_LFY_bs_list.py -fac "LFY_scores_matrix_19nucl" -th -23 
 
 factorTranscription = args.factor
 threshold = args.threshold
@@ -36,14 +41,12 @@ if factorTranscription == "LFY_scores_matrix_19nucl" :
 
 ####################### This is useful to calculate interdependances ###########
 
-codigo = { 'ACC': 5,
-           'ATG': 14, 'AAG': 2, 'AAA': 0, 'ATC': 13, 'AAC': 1, 'ATA': 12,
-           'AGG': 10, 'CCT': 23, 'ACT': 7, 'AGC': 9, 'ACA': 4, 'AGA': 8,
-           'CAT': 19, 'AAT': 3, 'ATT': 15, 'CTG': 30, 'CTA': 28,
-           'CTC': 29, 'CAC': 17, 'ACG': 6,'CAA': 16, 'AGT': 11, 'CCA': 20,
-           'CCG': 22, 'CCC': 21, 'TAT': 51, 'GGT': 43, 'TGT': 59, 'CGA': 24,
-           'CAG': 18, 'CGC': 25, 'GAT': 35, 'CGG': 26, 'CTT': 31, 'TGC': 57,
-           'GGG': 42, 'TAG': 50, 'GGA': 40, 'TAA': 48, 'GGC': 41, 'TAC': 49,
+codigo = { 'ACC': 5, 'ATG': 14, 'AAG': 2, 'AAA': 0, 'ATC': 13, 'AAC': 1, 'ATA': 12,
+           'AGG': 10, 'CCT': 23, 'ACT': 7, 'AGC': 9, 'ACA': 4, 'AGA': 8, 'CAT': 19, 
+           'AAT': 3, 'ATT': 15, 'CTG': 30, 'CTA': 28, 'CTC': 29, 'CAC': 17, 'ACG': 6,
+           'CAA': 16, 'AGT': 11, 'CCA': 20, 'CCG': 22, 'CCC': 21, 'TAT': 51, 'GGT': 43, 
+           'TGT': 59, 'CGA': 24, 'CAG': 18, 'CGC': 25, 'GAT': 35, 'CGG': 26, 'CTT': 31, 
+           'TGC': 57, 'GGG': 42, 'TAG': 50, 'GGA': 40, 'TAA': 48, 'GGC': 41, 'TAC': 49,
            'GAG': 34, 'TCG': 54, 'TTA': 60, 'GAC': 33, 'CGT': 27, 'TTT': 63,
            'TCA': 52, 'GCA': 36, 'GTA': 44, 'GCC': 37, 'GTC': 45, 'GCG': 38,
            'GTG': 46, 'TTC': 61, 'GTT': 47, 'GCT': 39, 'TGA': 56, 'TTG': 62,
@@ -179,32 +182,30 @@ def get_list_LFY_binding_sites(matScore,matRev,FastaFile,dependency_matrix,thres
 				
 				#These lines allows to retrieve the chromosome and the positions where there is a predicted binding site (score above the threshold fixed by the user) . 
 				if scoreStrandPos > threshold or scoreStrandNeg > threshold:
-					list_of_the_LFY_binding_sites.append([chrom[0],int(pos[1]) + c + 1, int(pos[1]) + c + 1 + 19,str(strandPos[0:19])])
+					list_of_the_LFY_binding_sites.append([chrom[0].replace('chr',''),int(pos[1]) + c + 1, int(pos[1]) + c + 1 + 19,str(strandPos[0:19])])
 
 	return(list_of_the_LFY_binding_sites)
 
 ########################################### About the main matrix #######################
 
 ''' The sens of the matrix is important: The positions are on the vertical sens and the bases are on the horizontal sens as described in the example.
-separation between numbers can be spaces, tabulation, comas...
+separation between numbers can be spaces, tabulation, comas... DON'T write your floats with comas (0,2). You have to write points (0.2).
 
                                                                          Example :   A C G T
                                                                   position 1:           0.16456   0.21614       0.1565,0.1645
                                                                   position 2:           0.645; 0.654    0.155 |||||| 0.4444
-                                                                                        ...
                                                                         '''
 ####################################################################################
 
 # These 3 lines allows to retrieve the matrix from the file
 F = open(MatrixFile,"r")
-matrix = F.read().replace("\r","\n") + "\n"
+matrix = F.read()
 F.close()
 
-# These 3 lines allows to retrieve all the individual frequency values from the matrix and put them in order into a list
+# These 3 lines allows to retrieve all the individual frequency values (retrieve only floats) from the matrix and put them in order into a list
 import re
 num = re.compile(r"([+-]?\d+[.,]\d+)")
 Mdata = num.findall(matrix)
-
 matScore, lenMotif = get_score_matrix(Mdata)
 
 '''The following line allows to produce the reversed matrix
@@ -212,11 +213,11 @@ if we take the example given before : A T G C
 			Position 1:      0.4444  0.155  0.654   0.645
 			Position 2:      0.1645  0.1565 0.21614 0.16456
 Now, we can notice that scores change between the positions 1 and 2, and between A and T, and between G and C.
-So we can calculate with this reverse matrix, the score of the complementary strand.
+So we can calculate the score of the complementary strand with this matRev matrix.
 '''
 matRev = list(reversed(matScore))
 
-'''The LFY matrix gets 3 * 3 bases that are interdependent, so we have to retrieve in a list the interdependances:
+'''The LFY matrix gets 3 * 3 bases that are interdependent, so we have to retrieve the interdependances in a list:
 dependency_matrix = [[4, 5, 6], [-2.482, -2.8048, -5.8493, -1.9992, -4.463, -5.8493, -6.0225, -6.0225, ...], 
 			[9, 10, 11], [-4.3503, -5.1942, -4.3503, -5.1942, -5.1942, -5.1942, -3.434, -5.1942, -3.9448, ...], 
 			[14, 15, 16], [-6.0225, -6.0225, -6.0225, -6.0225, -1.1954, -5.8493, -5.8493, -5.8493, -6.0225, -6.0225, -6.0225, ...]]
@@ -224,21 +225,33 @@ dependency_matrix = [[4, 5, 6], [-2.482, -2.8048, -5.8493, -1.9992, -4.463, -5.8
 dependency_matrix = get_dependency_matrix(dependencyFile)
 
 
-########## get list[chromosome, first position of a BS, last position of a BS, 'sequence of the BS']:
+########## get list[chromosome number, first position of a BS, last position of a BS, 'sequence of the BS']:
 list_of_the_LFY_binding_sites = get_list_LFY_binding_sites(matScore,matRev,FastaFile,dependency_matrix,threshold,factorTranscription)
-print("list_of_the_LFY_binding_sites : ",list_of_the_LFY_binding_sites)
+
+#chr1_list = [s for s in list_of_the_LFY_binding_sites if s[0] == '1' ]
+#chr2_list = [s for s in list_of_the_LFY_binding_sites if s[0] == '2' ]
+#chr3_list = [s for s in list_of_the_LFY_binding_sites if s[0] == '3' ]
+#chr4_list = [s for s in list_of_the_LFY_binding_sites if s[0] == '4' ]
+#chr5_list = [s for s in list_of_the_LFY_binding_sites if s[0] == '5' ]
 
 ###### STEP 2: Applying a loop on all the vcf files and retrieve the new sequences
 
-#dir = '/work/adrien/program_including_VCF_files/vcf_files'
-#for root, dirs, filenames in os.walk(dir):
-	#for f in filenames:
-		#FILE = open(os.path.join(root, f), 'r')
-		#vcf_reader = vcf.Reader(open('FILE', 'r'))
-		#for record in vcf_reader:
-			## check if the polymorphism is contained in the list_of_the_LFY_binding_sites
-			## if this is the case, replace the original sequence by the new one.
-			
+def add_modified_sequences_from_accessions():
+	for vcf_filename in glob.glob('VCF_files/1001genomes_snp-short-indel_only_ACGTN.vcf'):
+		vcf_reader = vcf.Reader(open(vcf_filename, 'r'))
+		for record in tqdm(vcf_reader):
+			for LFY_bs_list in list_of_the_LFY_binding_sites:
+				if LFY_bs_list[0] == record.CHROM and LFY_bs_list[1] <= record.POS < LFY_bs_list[2] :
+					LFY_bs_list.append(LFY_bs_list[3][0:record.POS-LFY_bs_list[1]]+str(record.ALT[0])+LFY_bs_list[3][record.POS-LFY_bs_list[1]+1:19])
+	return(list_of_the_LFY_binding_sites)
+	
+list_of_the_LFY_binding_sites = add_modified_sequences_from_accessions()
+
+text_file = open("list_of_the_LFY_binding_sites.txt", "w")
+text_file.write(list_of_the_LFY_binding_sites)
+text_file.close()
+
+# loop on list_of_the_LFY_binding_sites to retrieve the sequences and write to fasta file.		
 # Redo the get_list_LFY_binding_sites function with the new list
 # list_of_the_LFY_binding_sites = get_list_LFY_binding_sites(matScore,matRev,FastaFile,dependency_matrix,threshold,factorTranscription)
 
